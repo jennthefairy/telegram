@@ -1,4 +1,4 @@
-import { bot } from '../../index.js';
+import { bot } from '../index.js';
 import { airtableGetRecord } from '../lib/airtable.js';
 
 interface OrderNotificationData {
