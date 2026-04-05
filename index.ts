@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { handleTelegramWebhook } from './bot/index.js';
 import { startScheduler } from './bot/scheduler.js';
-import { handleStripeWebhook } from './routes/webhook.js';
+import { handleStripeWebhook } from './src/routes/webhook.js';
 
 const app = new Hono();
 
