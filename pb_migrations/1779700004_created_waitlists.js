@@ -1,6 +1,5 @@
 /// <reference path="../pb_data/types.d.ts" />
-// Airtable WAITLISTS -> PocketBase waitlists. Airtable linked field `user_id`
-// becomes relation `user` (-> users). Written by routes/waitlist.ts.
+// Airtable WAITLISTS -> PocketBase waitlists. Airtable `user_id` -> relation `user`.
 migrate((app) => {
   const users = app.findCollectionByNameOrId("users");
   const collection = new Collection({
@@ -18,6 +17,7 @@ migrate((app) => {
       { "id": "rel_user",     "name": "user",       "type": "relation", "required": false,
         "collectionId": users.id, "cascadeDelete": false, "minSelect": 0, "maxSelect": 1 },
       { "id": "text_email",   "name": "email",      "type": "text", "required": true },
+      { "id": "text_sku_code","name": "sku_code",   "type": "text", "required": false },
       { "id": "bool_notified","name": "notified",   "type": "bool", "required": false },
       { "id": "date_created", "name": "created_at", "type": "autodate", "onCreate": true, "onUpdate": false }
     ]
