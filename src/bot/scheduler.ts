@@ -178,7 +178,7 @@ export async function runStuckOrderWatchdog(): Promise<void> {
             if (linkedUserIds[0]) {
               const user = await airtableGetRecord('USERS', linkedUserIds[0]);
               if (user?.fields.telegram_chat_id) {
-                const { bot } = await import('../index.js');
+                const { bot } = await import('./index.js');
                 await bot.api.sendMessage(
                   user.fields.telegram_chat_id,
                   'Hang tight! Your order is being processed. We\'ll have an update for you soon.'
