@@ -1,5 +1,5 @@
 import { bot } from './index.js';
-import { airtableGetRecord } from '../lib/airtable.js';
+import { pbGetRecord } from '../lib/pocketbase.js';
 import { adminApprovalRequest } from './messages.js';
 
 interface OrderNotificationData {
@@ -13,14 +13,14 @@ interface OrderNotificationData {
 }
 
 export async function sendOrderNotification(data: OrderNotificationData): Promise<void> {
-  const campaign = await airtableGetRecord('CAMPAIGNS', data.campaign_id);
+  const campaign = await pbGetRecord('campaigns', data.campaign_id);
   if (!campaign) return;
 
-  const linkedUserIds: string[] = campaign.fields.user_id || [];
+  const linkedUserIds: string[] = campaign.fields.user ? [campaign.fields.user] : [];
   const userRecordId = linkedUserIds[0];
   if (!userRecordId) return;
 
-  const user = await airtableGetRecord('USERS', userRecordId);
+  const user = await pbGetRecord('users', userRecordId);
   if (!user?.fields.telegram_chat_id) return;
 
   const chatId = user.fields.telegram_chat_id;
@@ -58,14 +58,14 @@ export async function sendCampaignCloseNotification(
   campaignId: string,
   goalMet: boolean
 ): Promise<void> {
-  const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+  const campaign = await pbGetRecord('campaigns', campaignId);
   if (!campaign) return;
 
-  const linkedUserIds: string[] = campaign.fields.user_id || [];
+  const linkedUserIds: string[] = campaign.fields.user ? [campaign.fields.user] : [];
   const userRecordId = linkedUserIds[0];
   if (!userRecordId) return;
 
-  const user = await airtableGetRecord('USERS', userRecordId);
+  const user = await pbGetRecord('users', userRecordId);
   if (!user?.fields.telegram_chat_id) return;
 
   const chatId = user.fields.telegram_chat_id;

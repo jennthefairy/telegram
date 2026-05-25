@@ -1,7 +1,7 @@
 import { Bot, webhookCallback } from 'grammy';
 import { registerCommands } from './commands.js';
 import { registerCallbacks } from './callbacks.js';
-import { airtableFetch, airtableUpdate, sanitizeParam } from '../lib/airtable.js';
+import { pbList, pbUpdate, sanitizeParam } from '../lib/pocketbase.js';
 import { usernameInvalid, usernameTaken, usernameConfirmation } from './messages.js';
 
 export const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN || '');
@@ -17,8 +17,8 @@ bot.on('message:text', async (ctx) => {
 
   if (text.startsWith('/')) return;
 
-  const data = await airtableFetch('USERS', {
-    filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+  const data = await pbList('users', {
+    filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
     maxRecords: 1,
   });
   const user = data.records?.[0];
@@ -31,8 +31,8 @@ bot.on('message:text', async (ctx) => {
       return;
     }
 
-    const existing = await airtableFetch('USERS', {
-      filterByFormula: `{username}='${sanitizeParam(username)}'`,
+    const existing = await pbList('users', {
+      filter: `username='${sanitizeParam(username)}'`,
       maxRecords: 1,
     });
 
@@ -41,7 +41,7 @@ bot.on('message:text', async (ctx) => {
       return;
     }
 
-    await airtableUpdate('USERS', user.id, { username, bot_state: 'active' });
+    await pbUpdate('users', user.id, { username, bot_state: 'active' });
 
     await ctx.reply(usernameConfirmation(username), { parse_mode: 'Markdown' });
     return;

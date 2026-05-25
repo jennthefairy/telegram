@@ -1,4 +1,4 @@
-import { airtableGetRecord, airtableCreate, airtableUpdate } from '../lib/airtable.js';
+import { pbGetRecord, pbCreate, pbUpdate } from '../lib/pocketbase.js';
 
 export async function createBotCheckoutSession(params: {
   campaignId: string;
@@ -39,8 +39,8 @@ export async function createBotCheckoutSession(params: {
   if (session.error) throw new Error(session.error.message);
 
   // Create order record
-  await airtableCreate('ORDERS', {
-    campaign_id: [campaignId],
+  await pbCreate('orders', {
+    campaign: campaignId,
     campaign_id_text: campaignId,
     customer_email: email,
     customer_name: name,
@@ -52,10 +52,10 @@ export async function createBotCheckoutSession(params: {
   });
 
   // Update campaign sold count
-  const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+  const campaign = await pbGetRecord('campaigns', campaignId);
   if (campaign) {
     const currentSold = campaign.fields.current_units || 0;
-    await airtableUpdate('CAMPAIGNS', campaignId, { current_units: currentSold + 1 });
+    await pbUpdate('campaigns', campaignId, { current_units: currentSold + 1 });
   }
 
   return { checkoutUrl: session.url, sessionId: session.id };

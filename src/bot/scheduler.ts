@@ -1,4 +1,4 @@
-import { airtableFetch, airtableGetRecord, airtableUpdate, airtableCreate } from '../lib/airtable.js';
+import { pbList, pbGetRecord, pbUpdate, pbCreate } from '../lib/pocketbase.js';
 import { sendCampaignCloseNotification, sendAdminAlert } from './notifications.js';
 
 async function delay(ms: number) {
@@ -8,8 +8,8 @@ async function delay(ms: number) {
 export async function runCampaignAutoClose(): Promise<void> {
   console.log('[cron] Running campaign auto-close check...');
   try {
-    const data = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: 'AND({status}="active", IS_BEFORE({end_date}, NOW()))',
+    const data = await pbList('campaigns', {
+      filter: `status='active' && end_date < @now`,
     });
     const campaigns = data.records || [];
 
@@ -27,8 +27,8 @@ export async function runCampaignAutoClose(): Promise<void> {
 
       console.log(`[cron] Processing ${campaignName}: ${currentUnits}/${goalUnits} — goal ${goalMet ? 'met' : 'not met'}`);
 
-      const ordersData = await airtableFetch('ORDERS', {
-        filterByFormula: `AND({campaign_id_text}="${campaignId}", {capture_status}="pending")`,
+      const ordersData = await pbList('orders', {
+        filter: `campaign_id_text='${campaignId}' && capture_status='pending'`,
       });
       const orders = ordersData.records || [];
 
@@ -38,7 +38,7 @@ export async function runCampaignAutoClose(): Promise<void> {
         const paymentIntentId = order.fields.payment_intent_id;
 
         if (state !== 'Pre-Auth') {
-          await airtableCreate('AUDIT_LOGS', {
+          await pbCreate('audit_logs', {
             order_id: orderId,
             action: 'invalid_state_transition',
             details: `Expected Pre-Auth, got ${state}`,
@@ -67,14 +67,14 @@ export async function runCampaignAutoClose(): Promise<void> {
             const captureResult = (await captureRes.json()) as any;
 
             if (captureResult.error) {
-              await airtableUpdate('ORDERS', orderId, {
+              await pbUpdate('orders', orderId, {
                 capture_status: 'error',
                 state: 'Error',
                 last_state_change: new Date().toISOString(),
               });
               await sendAdminAlert(`Capture failed for order ${orderId}: ${captureResult.error.message}`);
             } else {
-              await airtableUpdate('ORDERS', orderId, {
+              await pbUpdate('orders', orderId, {
                 capture_status: 'captured',
                 state: 'Charged',
                 last_state_change: new Date().toISOString(),
@@ -94,14 +94,14 @@ export async function runCampaignAutoClose(): Promise<void> {
             const cancelResult = (await cancelRes.json()) as any;
 
             if (cancelResult.error) {
-              await airtableUpdate('ORDERS', orderId, {
+              await pbUpdate('orders', orderId, {
                 capture_status: 'error',
                 state: 'Error',
                 last_state_change: new Date().toISOString(),
               });
               await sendAdminAlert(`Cancel failed for order ${orderId}: ${cancelResult.error.message}`);
             } else {
-              await airtableUpdate('ORDERS', orderId, {
+              await pbUpdate('orders', orderId, {
                 capture_status: 'cancelled',
                 state: 'Released',
                 last_state_change: new Date().toISOString(),
@@ -117,7 +117,7 @@ export async function runCampaignAutoClose(): Promise<void> {
       }
 
       const newStatus = goalMet ? 'successful' : 'failed';
-      await airtableUpdate('CAMPAIGNS', campaignId, { status: newStatus });
+      await pbUpdate('campaigns', campaignId, { status: newStatus });
 
       await sendCampaignCloseNotification(campaignId, goalMet).catch((err) => {
         console.error(`[cron] Failed to send close notification for ${campaignName}:`, err);
@@ -133,14 +133,17 @@ export async function runCampaignAutoClose(): Promise<void> {
 export async function runStuckOrderWatchdog(): Promise<void> {
   console.log('[cron] Running stuck order watchdog...');
   try {
-    const stuckData = await airtableFetch('ORDERS', {
-      filterByFormula:
-        'AND(NOT({state}="Delivered"), NOT({state}="Released"), NOT({state}="Refunded"), DATETIME_DIFF(NOW(), {last_state_change}, \'hours\') > 24)',
+    // Stuck = not in a terminal state and untouched for >24h
+    const stuckCutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const stuckData = await pbList('orders', {
+      filter: `state!='Delivered' && state!='Released' && state!='Refunded' && last_state_change < '${stuckCutoff}'`,
     });
 
     for (const order of stuckData.records || []) {
-      const recentAlerts = await airtableFetch('AUDIT_LOGS', {
-        filterByFormula: `AND({order_id}="${order.id}", {action}="watchdog_alert_sent", DATETIME_DIFF(NOW(), {created_at}, 'hours') < 4)`,
+      // Dedupe: skip if a watchdog alert was already logged for this order in the last 4h
+      const alertCutoff = new Date(Date.now() - 4 * 3600 * 1000).toISOString();
+      const recentAlerts = await pbList('audit_logs', {
+        filter: `order_id='${order.id}' && action='watchdog_alert_sent' && created_at > '${alertCutoff}'`,
         maxRecords: 1,
       }).catch(() => ({ records: [] }));
 
@@ -150,7 +153,7 @@ export async function runStuckOrderWatchdog(): Promise<void> {
         `Stuck order: ${order.id}\nState: ${order.fields.state}\nLast change: ${order.fields.last_state_change}`
       );
 
-      await airtableCreate('AUDIT_LOGS', {
+      await pbCreate('audit_logs', {
         order_id: order.id,
         action: 'watchdog_alert_sent',
         created_at: new Date().toISOString(),
@@ -159,9 +162,9 @@ export async function runStuckOrderWatchdog(): Promise<void> {
       await delay(200);
     }
 
-    const aiPendingData = await airtableFetch('ORDERS', {
-      filterByFormula:
-        'AND({state}="AI_Pending", DATETIME_DIFF(NOW(), {created_at}, \'minutes\') > 90)',
+    const aiCutoff = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+    const aiPendingData = await pbList('orders', {
+      filter: `state='AI_Pending' && created_at < '${aiCutoff}'`,
     });
 
     for (const order of aiPendingData.records || []) {
@@ -172,11 +175,11 @@ export async function runStuckOrderWatchdog(): Promise<void> {
       if (minutesOld >= 120 && order.fields.workflow_name !== 't120_auto_patience_msg') {
         const campaignId = order.fields.campaign_id_text;
         if (campaignId) {
-          const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+          const campaign = await pbGetRecord('campaigns', campaignId);
           if (campaign) {
-            const linkedUserIds: string[] = campaign.fields.user_id || [];
+            const linkedUserIds: string[] = campaign.fields.user ? [campaign.fields.user] : [];
             if (linkedUserIds[0]) {
-              const user = await airtableGetRecord('USERS', linkedUserIds[0]);
+              const user = await pbGetRecord('users', linkedUserIds[0]);
               if (user?.fields.telegram_chat_id) {
                 const { bot } = await import('./index.js');
                 await bot.api.sendMessage(
@@ -188,7 +191,7 @@ export async function runStuckOrderWatchdog(): Promise<void> {
           }
         }
 
-        await airtableUpdate('ORDERS', order.id, {
+        await pbUpdate('orders', order.id, {
           workflow_name: 't120_auto_patience_msg',
         }).catch(() => {});
       } else if (minutesOld < 120) {
