@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { airtableUpdate } from '../lib/airtable.js';
+import { pbUpdate } from '../lib/pocketbase.js';
 import { sendAdminApprovalRequest } from '../bot/notifications.js';
 
 // Replaces the n8n "campaign-for-review" webhook: whatever creates a CAMPAIGNS
@@ -25,7 +25,7 @@ export async function handleCampaignForReview(c: Context): Promise<Response> {
   }
 
   // Re-assert pending status (parity with the n8n PATCH; harmless if already set).
-  await airtableUpdate('CAMPAIGNS', campaign_id, { status: 'pending_approval' }).catch((err) =>
+  await pbUpdate('campaigns', campaign_id, { status: 'pending_approval' }).catch((err) =>
     console.error('campaign-for-review: status PATCH failed:', err)
   );
 

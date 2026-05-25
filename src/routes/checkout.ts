@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { airtableGetRecord, airtableCreate, airtableUpdate, airtableFetch, sanitizeParam } from '../lib/airtable.js';
+import { pbGetRecord, pbCreate, pbUpdate, pbList, sanitizeParam } from '../lib/pocketbase.js';
 
 export async function handleCheckout(c: Context): Promise<Response> {
   const body = await c.req.json<{
@@ -16,16 +16,15 @@ export async function handleCheckout(c: Context): Promise<Response> {
     return c.json({ error: 'Missing required fields' }, 400);
   }
 
-  const campaign = await airtableGetRecord('CAMPAIGNS', campaign_id);
+  const campaign = await pbGetRecord('campaigns', campaign_id);
   if (!campaign) return c.json({ error: 'Campaign not found' }, 404);
 
   const productName = campaign.fields.campaign_name || 'Product';
-  const linkedUserIds: string[] = campaign.fields.user_id || [];
-  const userRecordId = linkedUserIds[0];
+  const userRecordId: string | undefined = campaign.fields.user || undefined;
 
   let username = 'shop';
   if (userRecordId) {
-    const user = await airtableGetRecord('USERS', userRecordId);
+    const user = await pbGetRecord('users', userRecordId);
     if (user) username = user.fields.username || user.fields.first_name || 'shop';
   }
 
@@ -59,8 +58,8 @@ export async function handleCheckout(c: Context): Promise<Response> {
   const session = await stripeRes.json() as any;
   if (session.error) return c.json({ error: session.error.message }, 400);
 
-  await airtableCreate('ORDERS', {
-    campaign_id: [campaign_id],
+  await pbCreate('orders', {
+    campaign: campaign_id,
     campaign_id_text: campaign_id,
     customer_email: email,
     customer_name: name || '',
@@ -72,16 +71,16 @@ export async function handleCheckout(c: Context): Promise<Response> {
   });
 
   const currentSold = campaign.fields.current_units || 0;
-  await airtableUpdate('CAMPAIGNS', campaign_id, { current_units: currentSold + 1 });
+  await pbUpdate('campaigns', campaign_id, { current_units: currentSold + 1 });
 
   if (referrer) {
     (async () => {
       try {
-        const refUsersData = await airtableFetch('USERS', { filterByFormula: `{username}='${sanitizeParam(referrer)}'`, maxRecords: 1 });
+        const refUsersData = await pbList('users', { filter: `username='${sanitizeParam(referrer)}'`, maxRecords: 1 });
         const refUser = refUsersData.records?.[0];
         if (refUser && refUser.id !== userRecordId) {
-          await airtableCreate('REFERRALS', {
-            referrer_id: [refUser.id],
+          await pbCreate('referrals', {
+            referrer: refUser.id,
             stripe_session_id: session.id,
             referred_email: email,
             status: 'pending',

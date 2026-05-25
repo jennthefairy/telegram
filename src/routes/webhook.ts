@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import Stripe from 'stripe';
-import { airtableFetch, airtableUpdate, airtableCreate, airtableGetRecord } from '../lib/airtable.js';
+import { pbList, pbUpdate, pbCreate, pbGetRecord } from '../lib/pocketbase.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -24,13 +24,13 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
-    const ordersData = await airtableFetch('ORDERS', {
-      filterByFormula: `{stripe_session_id}='${session.id}'`,
+    const ordersData = await pbList('orders', {
+      filter: `stripe_session_id='${session.id}'`,
       maxRecords: 1,
     });
     const order = ordersData.records?.[0];
     if (order) {
-      await airtableUpdate('ORDERS', order.id, {
+      await pbUpdate('orders', order.id, {
         capture_status: 'pending',
         payment_intent_id: session.payment_intent,
       });
@@ -44,13 +44,13 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
 
   if (event.type === 'payment_intent.canceled') {
     const pi = event.data.object as Stripe.PaymentIntent;
-    const ordersData = await airtableFetch('ORDERS', {
-      filterByFormula: `{payment_intent_id}='${pi.id}'`,
+    const ordersData = await pbList('orders', {
+      filter: `payment_intent_id='${pi.id}'`,
       maxRecords: 1,
     });
     const order = ordersData.records?.[0];
     if (order && order.fields.capture_status !== 'cancelled') {
-      await airtableUpdate('ORDERS', order.id, {
+      await pbUpdate('orders', order.id, {
         capture_status: 'cancelled',
         state: 'Released',
       });
@@ -59,18 +59,18 @@ export async function handleStripeWebhook(c: Context): Promise<Response> {
 
   if (event.type === 'payment_intent.succeeded') {
     const pi = event.data.object as Stripe.PaymentIntent;
-    const ordersData = await airtableFetch('ORDERS', { filterByFormula: `{payment_intent_id}='${pi.id}'`, maxRecords: 1 });
+    const ordersData = await pbList('orders', { filter: `payment_intent_id='${pi.id}'`, maxRecords: 1 });
     const order = ordersData.records?.[0];
     if (order?.fields?.stripe_session_id) {
-      const refData = await airtableFetch('REFERRALS', { filterByFormula: `AND({stripe_session_id}='${order.fields.stripe_session_id}',{status}='pending')`, maxRecords: 1 });
+      const refData = await pbList('referrals', { filter: `stripe_session_id='${order.fields.stripe_session_id}' && status='pending'`, maxRecords: 1 });
       const referral = refData.records?.[0];
       if (referral) {
-        const referrerId = (referral.fields.referrer_id as string[])?.[0];
+        const referrerId = referral.fields.referrer as string;
         if (referrerId) {
-          await airtableCreate('POINTS_LEDGER', { user_id: [referrerId], delta: 10, reason: 'referral_vested', ref_id: referral.id, created_at: new Date().toISOString() });
-          await airtableUpdate('REFERRALS', referral.id, { status: 'awarded', vested_at: new Date().toISOString(), points_awarded: 10 });
-          const refUser = await airtableGetRecord('USERS', referrerId);
-          if (refUser) await airtableUpdate('USERS', referrerId, { points_balance: (refUser.fields.points_balance || 0) + 10 });
+          await pbCreate('points_ledger', { user: referrerId, delta: 10, reason: 'referral_vested', ref_id: referral.id, created_at: new Date().toISOString() });
+          await pbUpdate('referrals', referral.id, { status: 'awarded', vested_at: new Date().toISOString(), points_awarded: 10 });
+          const refUser = await pbGetRecord('users', referrerId);
+          if (refUser) await pbUpdate('users', referrerId, { points_balance: (refUser.fields.points_balance || 0) + 10 });
         }
       }
     }

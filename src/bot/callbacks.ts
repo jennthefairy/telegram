@@ -1,11 +1,11 @@
 import { Bot } from 'grammy';
 import {
-  airtableFetch,
-  airtableGetRecord,
-  airtableUpdate,
-  airtableCreate,
+  pbList,
+  pbGetRecord,
+  pbUpdate,
+  pbCreate,
   sanitizeParam,
-} from '../lib/airtable.js';
+} from '../lib/pocketbase.js';
 import { mainMenuKeyboard, campaignListKeyboard, campaignDetailKeyboard } from './keyboards.js';
 import { createBotCheckoutSession } from './checkout.js';
 import {
@@ -21,8 +21,8 @@ export function registerCallbacks(bot: Bot) {
   // Shop — list active campaigns
   bot.callbackQuery('shop', async (ctx) => {
     await ctx.answerCallbackQuery();
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `{status}='active'`,
+    const campaigns = await pbList('campaigns', {
+      filter: `status='active'`,
     });
     const list = campaigns.records || [];
     if (list.length === 0) {
@@ -55,8 +55,8 @@ export function registerCallbacks(bot: Bot) {
     await ctx.answerCallbackQuery();
     const chatId = String(ctx.chat!.id);
 
-    const userData = await airtableFetch('USERS', {
-      filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+    const userData = await pbList('users', {
+      filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
       maxRecords: 1,
     });
     const user = userData.records?.[0];
@@ -68,8 +68,8 @@ export function registerCallbacks(bot: Bot) {
       return;
     }
 
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `FIND('${user.id}', ARRAYJOIN({user_id}))`,
+    const campaigns = await pbList('campaigns', {
+      filter: `user='${user.id}'`,
     });
     const campaignIds = (campaigns.records || []).map((c: any) => c.id);
 
@@ -82,7 +82,7 @@ export function registerCallbacks(bot: Bot) {
 
     let orderText = 'Your campaign orders:\n\n';
     for (const cId of campaignIds.slice(0, 5)) {
-      const campaign = await airtableGetRecord('CAMPAIGNS', cId);
+      const campaign = await pbGetRecord('campaigns', cId);
       if (!campaign) continue;
       const name = campaign.fields.campaign_name || 'Campaign';
       const current = campaign.fields.current_units || 0;
@@ -98,7 +98,7 @@ export function registerCallbacks(bot: Bot) {
   bot.callbackQuery(/^campaign:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const campaignId = ctx.match[1];
-    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    const campaign = await pbGetRecord('campaigns', campaignId);
 
     if (!campaign) {
       await ctx.editMessageText('Campaign not found.', { reply_markup: mainMenuKeyboard() });
@@ -147,7 +147,7 @@ export function registerCallbacks(bot: Bot) {
   bot.callbackQuery(/^preorder:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery('Creating your checkout link...');
     const campaignId = ctx.match[1];
-    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    const campaign = await pbGetRecord('campaigns', campaignId);
 
     if (!campaign) {
       await ctx.reply('Campaign not found.');
@@ -169,8 +169,8 @@ export function registerCallbacks(bot: Bot) {
     }
 
     const chatId = String(ctx.chat!.id);
-    const userData = await airtableFetch('USERS', {
-      filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+    const userData = await pbList('users', {
+      filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
       maxRecords: 1,
     });
     const user = userData.records?.[0];
@@ -224,8 +224,8 @@ export function registerCallbacks(bot: Bot) {
 
   bot.callbackQuery('back:shop', async (ctx) => {
     await ctx.answerCallbackQuery();
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `{status}='active'`,
+    const campaigns = await pbList('campaigns', {
+      filter: `status='active'`,
     });
     const list = campaigns.records || [];
 
@@ -246,23 +246,23 @@ export function registerCallbacks(bot: Bot) {
     const campaignId = ctx.match[1];
     const adminChatId = String(ctx.chat?.id ?? '');
 
-    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    const campaign = await pbGetRecord('campaigns', campaignId);
     if (!campaign) {
       await ctx.answerCallbackQuery({ text: 'Campaign not found', show_alert: true });
       return;
     }
 
     // Set campaign active
-    await airtableUpdate('CAMPAIGNS', campaignId, {
+    await pbUpdate('campaigns', campaignId, {
       status: 'active',
       admin_approved_by: adminChatId,
       admin_approved_at: new Date().toISOString(),
     });
 
     // DM the creator
-    const creatorIds: string[] = campaign.fields.user_id || [];
+    const creatorIds: string[] = campaign.fields.user ? [campaign.fields.user] : [];
     if (creatorIds[0]) {
-      const creator = await airtableGetRecord('USERS', creatorIds[0]);
+      const creator = await pbGetRecord('users', creatorIds[0]);
       const creatorChatId = creator?.fields.telegram_chat_id;
       const username = creator?.fields.username || 'shop';
       if (creatorChatId) {
@@ -282,21 +282,21 @@ export function registerCallbacks(bot: Bot) {
   bot.callbackQuery(/^reject:(.+)$/, async (ctx) => {
     const campaignId = ctx.match[1];
 
-    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    const campaign = await pbGetRecord('campaigns', campaignId);
     if (!campaign) {
       await ctx.answerCallbackQuery({ text: 'Campaign not found', show_alert: true });
       return;
     }
 
     // Set campaign cancelled
-    await airtableUpdate('CAMPAIGNS', campaignId, { status: 'cancelled' });
+    await pbUpdate('campaigns', campaignId, { status: 'cancelled' });
 
-    const creatorIds: string[] = campaign.fields.user_id || [];
+    const creatorIds: string[] = campaign.fields.user ? [campaign.fields.user] : [];
     const creatorRecordId = creatorIds[0];
 
     // DM the creator
     if (creatorRecordId) {
-      const creator = await airtableGetRecord('USERS', creatorRecordId);
+      const creator = await pbGetRecord('users', creatorRecordId);
       const creatorChatId = creator?.fields.telegram_chat_id;
       if (creatorChatId) {
         await bot.api
@@ -305,12 +305,12 @@ export function registerCallbacks(bot: Bot) {
       }
 
       // 2nd-rejection flagging: count this creator's cancelled campaigns
-      const rejected = await airtableFetch('CAMPAIGNS', {
-        filterByFormula: `AND(FIND('${creatorRecordId}', ARRAYJOIN({user_id})), {status}='cancelled')`,
+      const rejected = await pbList('campaigns', {
+        filter: `user='${creatorRecordId}' && status='cancelled'`,
       });
       if ((rejected.records?.length || 0) >= 2 && !creator?.fields.is_flagged) {
-        await airtableUpdate('USERS', creatorRecordId, { is_flagged: true });
-        await airtableCreate('AUDIT_LOGS', {
+        await pbUpdate('users', creatorRecordId, { is_flagged: true });
+        await pbCreate('audit_logs', {
           actor: 'onboarding_bot',
           action: 'user_flagged',
           target_type: 'users',

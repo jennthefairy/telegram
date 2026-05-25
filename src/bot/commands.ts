@@ -1,5 +1,5 @@
 import { Bot } from 'grammy';
-import { airtableFetch, airtableCreate, airtableUpdate, sanitizeParam } from '../lib/airtable.js';
+import { pbList, pbCreate, pbUpdate, sanitizeParam } from '../lib/pocketbase.js';
 import { mainMenuKeyboard, campaignListKeyboard } from './keyboards.js';
 import {
   onboardingValueProp,
@@ -28,15 +28,15 @@ export function registerCommands(bot: Bot) {
     }
 
     // Look up user by telegram_chat_id
-    const data = await airtableFetch('USERS', {
-      filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+    const data = await pbList('users', {
+      filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
       maxRecords: 1,
     });
     const user = data.records?.[0];
 
     if (!user) {
       // New user — create record and start onboarding
-      await airtableCreate('USERS', {
+      await pbCreate('users', {
         telegram_chat_id: chatId,
         first_name: firstName,
         bot_state: 'new',
@@ -50,12 +50,12 @@ export function registerCommands(bot: Bot) {
       await ctx.reply(onboardingCta);
 
       // Set state to awaiting_username, then prompt for the username
-      const created = await airtableFetch('USERS', {
-        filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+      const created = await pbList('users', {
+        filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
         maxRecords: 1,
       });
       if (created.records?.[0]) {
-        await airtableUpdate('USERS', created.records[0].id, { bot_state: 'awaiting_username' });
+        await pbUpdate('users', created.records[0].id, { bot_state: 'awaiting_username' });
       }
 
       // Plain text — prompt contains literal underscores
@@ -65,14 +65,14 @@ export function registerCommands(bot: Bot) {
 
     // Existing user without username — re-prompt
     if (!user.fields.username) {
-      await airtableUpdate('USERS', user.id, { bot_state: 'awaiting_username' });
+      await pbUpdate('users', user.id, { bot_state: 'awaiting_username' });
       await ctx.reply(usernamePrompt);
       return;
     }
 
     // Returning user with username — show dashboard
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `AND(FIND('${user.id}', ARRAYJOIN({user_id})), {status}='active')`,
+    const campaigns = await pbList('campaigns', {
+      filter: `user='${user.id}' && status='active'`,
     });
     const campaignList = campaigns.records || [];
 
@@ -84,8 +84,8 @@ export function registerCommands(bot: Bot) {
   // /mycampaigns — full campaign list (all statuses)
   bot.command('mycampaigns', async (ctx) => {
     const chatId = String(ctx.chat.id);
-    const data = await airtableFetch('USERS', {
-      filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+    const data = await pbList('users', {
+      filter: `telegram_chat_id='${sanitizeParam(chatId)}'`,
       maxRecords: 1,
     });
     const user = data.records?.[0];
@@ -95,8 +95,8 @@ export function registerCommands(bot: Bot) {
       return;
     }
 
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `FIND('${user.id}', ARRAYJOIN({user_id}))`,
+    const campaigns = await pbList('campaigns', {
+      filter: `user='${user.id}'`,
       maxRecords: 10,
     });
     const campaignList = campaigns.records || [];
@@ -120,8 +120,8 @@ export function registerCommands(bot: Bot) {
   });
 
   bot.command('shop', async (ctx) => {
-    const campaigns = await airtableFetch('CAMPAIGNS', {
-      filterByFormula: `{status}='active'`,
+    const campaigns = await pbList('campaigns', {
+      filter: `status='active'`,
     });
 
     const campaignList = campaigns.records || [];

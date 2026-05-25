@@ -1,21 +1,21 @@
 import { Context } from 'hono';
-import { airtableFetch, sanitizeParam } from '../lib/airtable.js';
+import { pbList, sanitizeParam } from '../lib/pocketbase.js';
 import { renderCampaignPageDirect, render404Page } from './bio.js';
 
 export async function renderCampaignPage(c: Context): Promise<Response> {
   const username = sanitizeParam(c.req.param('username') ?? '');
   const slug = sanitizeParam(c.req.param('slug') ?? '');
 
-  const usersData = await airtableFetch('USERS', {
-    filterByFormula: `OR({username}='${username}', LOWER({username})='${username.toLowerCase()}')`,
+  const usersData = await pbList('users', {
+    filter: `username='${username.toLowerCase()}'`,
     maxRecords: 1,
   });
   const user = usersData.records?.[0];
   if (!user) return render404Page(c, username);
 
   const userRecordId = user.id;
-  const campaignsData = await airtableFetch('CAMPAIGNS', {
-    filterByFormula: `FIND('${userRecordId}', ARRAYJOIN({user_id}))`,
+  const campaignsData = await pbList('campaigns', {
+    filter: `user='${userRecordId}'`,
   });
   const campaigns: any[] = campaignsData.records || [];
 

@@ -1,13 +1,13 @@
 import { Context } from 'hono';
-import { airtableFetch, sanitizeParam } from '../lib/airtable.js';
+import { pbList, sanitizeParam } from '../lib/pocketbase.js';
 import { htmlHead } from '../lib/render.js';
 
 export async function renderBioPage(c: Context): Promise<Response> {
   const username = sanitizeParam(c.req.param('username') ?? '');
   const ref = sanitizeParam(c.req.query('ref') || '');
 
-  const usersData = await airtableFetch('USERS', {
-    filterByFormula: `OR({username}='${username}', LOWER({username})='${username.toLowerCase()}')`,
+  const usersData = await pbList('users', {
+    filter: `username='${username.toLowerCase()}'`,
     maxRecords: 1,
   });
   const user = usersData.records?.[0];
@@ -15,8 +15,8 @@ export async function renderBioPage(c: Context): Promise<Response> {
   if (!user) return render404Page(c, username);
 
   const userRecordId = user.id;
-  const campaignsData = await airtableFetch('CAMPAIGNS', {
-    filterByFormula: `AND(FIND('${userRecordId}', ARRAYJOIN({user_id})), {status}='active')`,
+  const campaignsData = await pbList('campaigns', {
+    filter: `user='${userRecordId}' && status='active'`,
   });
   const campaigns: any[] = campaignsData.records || [];
 
