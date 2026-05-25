@@ -1,6 +1,16 @@
 import { Bot } from 'grammy';
 import { airtableFetch, airtableCreate, airtableUpdate, sanitizeParam } from '../lib/airtable.js';
 import { mainMenuKeyboard, campaignListKeyboard } from './keyboards.js';
+import {
+  onboardingValueProp,
+  onboardingProfitExample,
+  onboardingCta,
+  usernamePrompt,
+  returningDashboard,
+  myCampaigns,
+} from './messages.js';
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function registerCommands(bot: Bot) {
   bot.command('start', async (ctx) => {
@@ -32,20 +42,14 @@ export function registerCommands(bot: Bot) {
         bot_state: 'new',
       });
 
-      await ctx.reply(
-        `Hey ${firstName}! Welcome to *PageFairy*\n\nLaunch your beauty brand risk-free with pre-order campaigns. Only get charged when the goal is met.`,
-        { parse_mode: 'Markdown' }
-      );
+      // Onboarding sequence — 3 staged messages (value prop -> profit example -> CTA)
+      await ctx.reply(onboardingValueProp(firstName));
+      await sleep(1500);
+      await ctx.reply(onboardingProfitExample, { parse_mode: 'Markdown' });
+      await sleep(1500);
+      await ctx.reply(onboardingCta);
 
-      await new Promise((r) => setTimeout(r, 1500));
-
-      await ctx.reply(
-        'Here\'s how it works:\n\n1. Create a campaign for your product\n2. Share your link — customers pre-order\n3. Hit your goal? Orders ship! Miss it? Everyone gets refunded.\n\nZero risk. Pure momentum.',
-      );
-
-      await new Promise((r) => setTimeout(r, 1500));
-
-      // Set state to awaiting_username
+      // Set state to awaiting_username, then prompt for the username
       const created = await airtableFetch('USERS', {
         filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
         maxRecords: 1,
@@ -54,18 +58,15 @@ export function registerCommands(bot: Bot) {
         await airtableUpdate('USERS', created.records[0].id, { bot_state: 'awaiting_username' });
       }
 
-      await ctx.reply(
-        'Let\'s set up your page! Choose a username (lowercase letters and numbers, 3-32 characters):',
-      );
+      // Plain text — prompt contains literal underscores
+      await ctx.reply(usernamePrompt);
       return;
     }
 
-    // Existing user without username
+    // Existing user without username — re-prompt
     if (!user.fields.username) {
       await airtableUpdate('USERS', user.id, { bot_state: 'awaiting_username' });
-      await ctx.reply(
-        `Welcome back, ${firstName}! You still need to pick a username. Enter one now (lowercase letters and numbers, 3-32 characters):`,
-      );
+      await ctx.reply(usernamePrompt);
       return;
     }
 
@@ -73,24 +74,37 @@ export function registerCommands(bot: Bot) {
     const campaigns = await airtableFetch('CAMPAIGNS', {
       filterByFormula: `AND(FIND('${user.id}', ARRAYJOIN({user_id})), {status}='active')`,
     });
-
     const campaignList = campaigns.records || [];
-    let dashboardText = `Welcome back, ${firstName}!\n\n`;
 
-    if (campaignList.length > 0) {
-      dashboardText += 'Your active campaigns:\n\n';
-      for (const c of campaignList) {
-        const name = c.fields.campaign_name || 'Untitled';
-        const current = c.fields.current_units || 0;
-        const goal = c.fields.goal_units || 10;
-        const pct = Math.round((current / goal) * 100);
-        dashboardText += `${name} — ${current}/${goal} sold (${pct}%)\n`;
-      }
-    } else {
-      dashboardText += 'No active campaigns right now.';
+    await ctx.reply(returningDashboard(firstName, campaignList), {
+      reply_markup: mainMenuKeyboard(),
+    });
+  });
+
+  // /mycampaigns — full campaign list (all statuses)
+  bot.command('mycampaigns', async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    const data = await airtableFetch('USERS', {
+      filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
+      maxRecords: 1,
+    });
+    const user = data.records?.[0];
+
+    if (!user?.fields.username) {
+      await ctx.reply('Set up your account first with /start');
+      return;
     }
 
-    await ctx.reply(dashboardText, { reply_markup: mainMenuKeyboard() });
+    const campaigns = await airtableFetch('CAMPAIGNS', {
+      filterByFormula: `FIND('${user.id}', ARRAYJOIN({user_id}))`,
+      maxRecords: 10,
+    });
+    const campaignList = campaigns.records || [];
+
+    await ctx.reply(myCampaigns(campaignList), {
+      parse_mode: 'Markdown',
+      reply_markup: mainMenuKeyboard(),
+    });
   });
 
   bot.command('help', async (ctx) => {

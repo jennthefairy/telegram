@@ -1,7 +1,21 @@
 import { Bot } from 'grammy';
-import { airtableFetch, airtableGetRecord, sanitizeParam } from '../lib/airtable.js';
+import {
+  airtableFetch,
+  airtableGetRecord,
+  airtableUpdate,
+  airtableCreate,
+  sanitizeParam,
+} from '../lib/airtable.js';
 import { mainMenuKeyboard, campaignListKeyboard, campaignDetailKeyboard } from './keyboards.js';
 import { createBotCheckoutSession } from './checkout.js';
+import {
+  campaignApprovedDM,
+  campaignRejectedDM,
+  adminApproveToast,
+  adminRejectToast,
+  errSoldOut,
+  errExpiredLink,
+} from './messages.js';
 
 export function registerCallbacks(bot: Bot) {
   // Shop — list active campaigns
@@ -140,6 +154,20 @@ export function registerCallbacks(bot: Bot) {
       return;
     }
 
+    // Sold-out / expired guards (verbatim n8n error/state messages)
+    const cf = campaign.fields;
+    const cStatus = cf.status;
+    const cCurrent = cf.current_units || 0;
+    const cGoal = cf.goal_units || 10;
+    if (cStatus === 'cancelled' || cStatus === 'failed') {
+      await ctx.reply(errExpiredLink);
+      return;
+    }
+    if (cCurrent >= cGoal || cStatus === 'successful' || cStatus === 'completed') {
+      await ctx.reply(errSoldOut);
+      return;
+    }
+
     const chatId = String(ctx.chat!.id);
     const userData = await airtableFetch('USERS', {
       filterByFormula: `{telegram_chat_id}='${sanitizeParam(chatId)}'`,
@@ -211,5 +239,90 @@ export function registerCallbacks(bot: Bot) {
         reply_markup: campaignListKeyboard(list),
       });
     }
+  });
+
+  // ---- Admin approval: approve ----
+  bot.callbackQuery(/^approve:(.+)$/, async (ctx) => {
+    const campaignId = ctx.match[1];
+    const adminChatId = String(ctx.chat?.id ?? '');
+
+    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    if (!campaign) {
+      await ctx.answerCallbackQuery({ text: 'Campaign not found', show_alert: true });
+      return;
+    }
+
+    // Set campaign active
+    await airtableUpdate('CAMPAIGNS', campaignId, {
+      status: 'active',
+      admin_approved_by: adminChatId,
+      admin_approved_at: new Date().toISOString(),
+    });
+
+    // DM the creator
+    const creatorIds: string[] = campaign.fields.user_id || [];
+    if (creatorIds[0]) {
+      const creator = await airtableGetRecord('USERS', creatorIds[0]);
+      const creatorChatId = creator?.fields.telegram_chat_id;
+      const username = creator?.fields.username || 'shop';
+      if (creatorChatId) {
+        await bot.api
+          .sendMessage(creatorChatId, campaignApprovedDM(username), { parse_mode: 'Markdown' })
+          .catch((err) => console.error('Approved DM failed:', err));
+      }
+    }
+
+    await ctx.answerCallbackQuery({ text: adminApproveToast });
+    try {
+      await ctx.editMessageReplyMarkup(); // strip the approve/reject buttons
+    } catch {}
+  });
+
+  // ---- Admin approval: reject ----
+  bot.callbackQuery(/^reject:(.+)$/, async (ctx) => {
+    const campaignId = ctx.match[1];
+
+    const campaign = await airtableGetRecord('CAMPAIGNS', campaignId);
+    if (!campaign) {
+      await ctx.answerCallbackQuery({ text: 'Campaign not found', show_alert: true });
+      return;
+    }
+
+    // Set campaign cancelled
+    await airtableUpdate('CAMPAIGNS', campaignId, { status: 'cancelled' });
+
+    const creatorIds: string[] = campaign.fields.user_id || [];
+    const creatorRecordId = creatorIds[0];
+
+    // DM the creator
+    if (creatorRecordId) {
+      const creator = await airtableGetRecord('USERS', creatorRecordId);
+      const creatorChatId = creator?.fields.telegram_chat_id;
+      if (creatorChatId) {
+        await bot.api
+          .sendMessage(creatorChatId, campaignRejectedDM)
+          .catch((err) => console.error('Rejected DM failed:', err));
+      }
+
+      // 2nd-rejection flagging: count this creator's cancelled campaigns
+      const rejected = await airtableFetch('CAMPAIGNS', {
+        filterByFormula: `AND(FIND('${creatorRecordId}', ARRAYJOIN({user_id})), {status}='cancelled')`,
+      });
+      if ((rejected.records?.length || 0) >= 2 && !creator?.fields.is_flagged) {
+        await airtableUpdate('USERS', creatorRecordId, { is_flagged: true });
+        await airtableCreate('AUDIT_LOGS', {
+          actor: 'onboarding_bot',
+          action: 'user_flagged',
+          target_type: 'users',
+          target_id: creatorRecordId,
+          details: JSON.stringify({ reason: 'second_rejection', campaign_id: campaignId }),
+        }).catch((err) => console.error('AUDIT_LOGS write failed:', err));
+      }
+    }
+
+    await ctx.answerCallbackQuery({ text: adminRejectToast });
+    try {
+      await ctx.editMessageReplyMarkup();
+    } catch {}
   });
 }

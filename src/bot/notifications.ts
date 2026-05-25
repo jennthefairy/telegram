@@ -1,5 +1,6 @@
 import { bot } from './index.js';
 import { airtableGetRecord } from '../lib/airtable.js';
+import { adminApprovalRequest } from './messages.js';
 
 interface OrderNotificationData {
   campaign_id: string;
@@ -91,25 +92,24 @@ export async function sendCampaignCloseNotification(
 
 export async function sendAdminApprovalRequest(data: {
   campaignId: string;
-  campaignName: string;
   username: string;
+  productName: string;
+  wholesaleCost: number;
+  retailPrice: number;
+  goalUnits: number;
 }): Promise<void> {
   const adminChatId = process.env.ADMIN_CHAT_ID;
   if (!adminChatId) return;
 
   const { InlineKeyboard } = await import('grammy');
   const kb = new InlineKeyboard()
-    .text('Approve', `approve:${data.campaignId}`)
-    .text('Reject', `reject:${data.campaignId}`);
+    .text('✅ Approve', `approve:${data.campaignId}`)
+    .text('❌ Reject', `reject:${data.campaignId}`);
 
-  await bot.api.sendMessage(
-    adminChatId,
-    `New campaign needs approval:\n\n` +
-    `Name: ${data.campaignName}\n` +
-    `Creator: @${data.username}\n` +
-    `ID: ${data.campaignId}`,
-    { reply_markup: kb }
-  );
+  await bot.api.sendMessage(adminChatId, adminApprovalRequest(data), {
+    parse_mode: 'Markdown',
+    reply_markup: kb,
+  });
 }
 
 export async function sendAdminAlert(message: string): Promise<void> {
