@@ -6,6 +6,7 @@ import { renderBioPage, render404Page } from './routes/bio.js';
 import { renderCampaignPage } from './routes/campaign.js';
 import { handleCheckout } from './routes/checkout.js';
 import { handleWaitlist } from './routes/waitlist.js';
+import { handleCampaignForReview } from './routes/campaignReview.js';
 import { handleStripeWebhook } from './routes/webhook.js';
 import { handleTelegramWebhook } from './bot/index.js';
 import { startScheduler } from './bot/scheduler.js';
@@ -45,6 +46,7 @@ app.get('/', (c) => {
 // API routes
 app.post('/api/checkout', handleCheckout);
 app.post('/api/waitlist', handleWaitlist);
+app.post('/api/campaign-for-review', handleCampaignForReview);
 
 // Stripe webhook — raw body needed for signature verification
 app.post('/api/webhook/stripe', handleStripeWebhook);

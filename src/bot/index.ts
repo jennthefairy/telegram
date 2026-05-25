@@ -2,6 +2,7 @@ import { Bot, webhookCallback } from 'grammy';
 import { registerCommands } from './commands.js';
 import { registerCallbacks } from './callbacks.js';
 import { airtableFetch, airtableUpdate, sanitizeParam } from '../lib/airtable.js';
+import { usernameInvalid, usernameTaken, usernameConfirmation } from './messages.js';
 
 export const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN || '');
 
@@ -26,7 +27,7 @@ bot.on('message:text', async (ctx) => {
     const username = text.toLowerCase().replace(/\s+/g, '');
 
     if (!/^[a-z0-9]{3,32}$/.test(username)) {
-      await ctx.reply('Username must be 3-32 characters, lowercase letters and numbers only. Try again:');
+      await ctx.reply(usernameInvalid);
       return;
     }
 
@@ -36,17 +37,13 @@ bot.on('message:text', async (ctx) => {
     });
 
     if (existing.records?.length > 0) {
-      await ctx.reply('That username is already taken! Try another one:');
+      await ctx.reply(usernameTaken);
       return;
     }
 
     await airtableUpdate('USERS', user.id, { username, bot_state: 'active' });
 
-    const appUrl = process.env.APP_URL || 'https://pagefairy.com';
-    await ctx.reply(
-      `Your PageFairy page is live!\n\n${appUrl}/${username}\n\nShare this link with your audience. Use /shop to browse campaigns or /help for more info.`,
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply(usernameConfirmation(username), { parse_mode: 'Markdown' });
     return;
   }
 
